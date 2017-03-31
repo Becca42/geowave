@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Properties;
 
 import org.apache.commons.lang3.StringUtils;
-import org.restlet.resource.Get;
+import org.shaded.restlet.resource.Get;
+import org.shaded.restlet.resource.Post;
+import org.shaded.restlet.data.Status;
 
 import com.beust.jcommander.Parameter;
 import com.beust.jcommander.ParameterException;
@@ -39,65 +41,52 @@ public class AddIndexGroupCommand extends
 	@Override
 	public void execute(
 			OperationParams params ) {
-		// Result result = AddIndexGroup(params);
-		Result resultMessage = addIndexGroup(params);
-		if (resultMessage.result == USAGE_ERROR) {
-			throw new ParameterException(
-					"Must specify index group name and index names (comma separated)");
-		}
+		addIndexGroup(params);
 	}
 
-	// TODO add post functionality?
-
 	/**
-	 * Add rest endpoint for the addIndexGroup command. Looks for GET params
+	 * Add rest endpoint for the addIndexGroup command. Looks for POST params
 	 * with keys 'key' and 'value' to set.
 	 * 
-	 * @return string containing json with details of success or failure of the
-	 *         index group addition
+	 * @return none
 	 */
-	@Get("json")
-	public String computeResults() {
+	@Post("json")
+	public void computeResults() { // TODO think about return type
 		String key = getQueryValue("key");
 		String value = getQueryValue("value");
 		if ((key == null || key.equals("")) || value == null) {
-			return "{ \"result\":"
-					+ USAGE_ERROR
-					+ ", \"message\":\"Must specify index group name and index names (comma separated)\",\"prev\":\"\"}";
-		}
-
-		setParameters(
-				key,
-				value);
-		OperationParams params = new ManualOperationParams();
-		params.getContext().put(
-				ConfigOptions.PROPERTIES_FILE_CONTEXT,
-				ConfigOptions.getDefaultPropertyFile());
-
-		Result result = addIndexGroup(params);
-
-		if (result.result == INDEXING_ERROR) {
-			return "{ \"result\":" + INDEXING_ERROR + ", \"message\":\"indexing error\",\"groupname\":\""
-					+ result.groupName + "\"}";
-		}
-		else if (result.result == GROUP_EXISTS) {
-			return "{ \"result\":" + GROUP_EXISTS + ", \"message\":\"group exists error\",\"groupname\":\""
-					+ result.groupName + "\"}";
+			this.setStatus(
+					Status.CLIENT_ERROR_BAD_REQUEST,
+					"Requires: <name> <value>");
 		}
 		else {
-			return "{ \"result\":" + SUCCESS + ", \"message\":\"\",\"groupname\":\"" + result.groupName + "\"}";
-		}
+			setParameters(
+					key,
+					value);
+			OperationParams params = new ManualOperationParams();
+			params.getContext().put(
+					ConfigOptions.PROPERTIES_FILE_CONTEXT,
+					ConfigOptions.getDefaultPropertyFile());
 
+			try {
+				addIndexGroup(params);
+			}
+			catch (WritePropertiesException | ParameterException e) {
+				this.setStatus(
+						Status.SERVER_ERROR_INTERNAL,
+						e.getMessage());
+			}
+		}
 	}
 
 	/**
 	 * Adds index group
 	 * 
-	 * @return result of operation (type of failure or success)
+	 * @parameters params
+	 * @return none
 	 */
-	private Result addIndexGroup(
+	private void addIndexGroup(
 			OperationParams params ) {
-		Result result = new Result();
 		File propFile = (File) params.getContext().get(
 				ConfigOptions.PROPERTIES_FILE_CONTEXT);
 		Properties existingProps = ConfigOptions.loadProperties(
@@ -105,15 +94,12 @@ public class AddIndexGroupCommand extends
 				null);
 
 		if (parameters.size() < 2) {
-			// throw new ParameterException(
-			// "Must specify index group name and index names (comma separated)");
-			result.result = USAGE_ERROR;
-			return result;
+			throw new ParameterException(
+					"Must specify index group name and index names (comma separated)");
 		}
 
 		// New index group name
 		String newGroupName = parameters.get(0);
-		result.groupName = newGroupName;
 		String[] indexes = parameters.get(
 				1).split(
 				",");
@@ -123,10 +109,8 @@ public class AddIndexGroupCommand extends
 		if (groupOptions.load(
 				existingProps,
 				getNamespace())) {
-			// throw new ParameterException(
-			// "That index group already exists: " + newGroupName);
-			result.result = GROUP_EXISTS;
-			return result;
+			throw new ParameterException(
+					"That index group already exists: " + newGroupName);
 		}
 
 		// Make sure all the indexes exist, and add them to the group options.
@@ -136,10 +120,8 @@ public class AddIndexGroupCommand extends
 			if (!options.load(
 					existingProps,
 					IndexPluginOptions.getIndexNamespace(indexes[i]))) {
-				// throw new ParameterException(
-				// "That index does not exist: " + indexes[i]);
-				result.result = INDEXING_ERROR;
-				return result;
+				throw new ParameterException(
+						"That index does not exist: " + indexes[i]);
 			}
 			groupOptions.getDimensionalityPlugins().put(
 					indexes[i],
@@ -152,11 +134,12 @@ public class AddIndexGroupCommand extends
 				getNamespace());
 
 		// Write to disk.
-		ConfigOptions.writeProperties(
+		if (!ConfigOptions.writeProperties(
 				propFile,
-				existingProps);
-		result.result = SUCCESS;
-		return result;
+				existingProps)) {
+			throw new WritePropertiesException(
+					"Write failure");
+		}
 	}
 
 	public String getPluginName() {
@@ -179,10 +162,13 @@ public class AddIndexGroupCommand extends
 		this.parameters.add(commaSeparatedIndexes);
 	}
 
-	private static class Result
+	private static class WritePropertiesException extends
+			RuntimeException
 	{
-		int result;
-		String groupName;
+		private WritePropertiesException(
+				String string ) {
+			super(
+					string);
+		}
 	}
-
 }

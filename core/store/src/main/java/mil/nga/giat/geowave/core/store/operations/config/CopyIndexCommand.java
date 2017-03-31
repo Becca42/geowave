@@ -6,7 +6,9 @@ import java.util.List;
 import java.util.Properties;
 
 import org.apache.commons.lang3.StringUtils;
-import org.restlet.resource.Get;
+import org.shaded.restlet.resource.Get;
+import org.shaded.restlet.resource.Post;
+import org.shaded.restlet.data.Status;
 
 import mil.nga.giat.geowave.core.cli.api.DefaultOperation;
 import com.beust.jcommander.Parameter;
@@ -82,66 +84,62 @@ public class CopyIndexCommand extends
 
 	}
 
-	@Get("json")
-	public String computeResults() {
-		// TODO
+	@Post("json")
+	public void computeResults() {
+
 		String key = getQueryValue("key");
 		String value = getQueryValue("value");
 
 		if ((key == null || key.equals("")) || value == null) {
-			return "{ \"result\":" + USAGE_ERROR
-					+ ", \"message\":\"Must specify existing index and new index (comma separated)\",\"prev\":\"\"}";
-		}
-
-		setParameters(
-				key,
-				value);
-		OperationParams params = new ManualOperationParams();
-
-		params.getContext().put(
-				ConfigOptions.PROPERTIES_FILE_CONTEXT,
-				ConfigOptions.getDefaultPropertyFile());
-
-		Result result = copyIndex(params);
-
-		if (result.result == USAGE_ERROR) {
-			return "{ \"result\":" + USAGE_ERROR + ", \"message\":\"usage error\":\"" + "\"}";
-		}
-		else if (result.result == INDEX_EXISTS) {
-			return "{ \"result\":" + INDEX_EXISTS + ", \"message\":\"index exists error\",\"indexname\":\""
-					+ result.newIndex + "\"}";
+			this.setStatus(
+					Status.CLIENT_ERROR_BAD_REQUEST,
+					"Requires: <name> <value>");
 		}
 		else {
-			return "{ \"result\":" + SUCCESS + ", \"message\":\"\",\"indexname\":\"" + result.newIndex + "\"}";
+			setParameters(
+					key,
+					value);
+			OperationParams params = new ManualOperationParams();
+
+			params.getContext().put(
+					ConfigOptions.PROPERTIES_FILE_CONTEXT,
+					ConfigOptions.getDefaultPropertyFile());
+
+			try {
+				copyIndex(params);
+			}
+			catch (WritePropertiesException | ParameterException e) {
+				this.setStatus(
+						Status.SERVER_ERROR_INTERNAL,
+						e.getMessage());
+			}
 		}
 	}
 
-	/* TODO */
-	private Result copyIndex(
+	/**
+	 * copies index
+	 * 
+	 * @return none
+	 */
+	private void copyIndex(
 			OperationParams params ) {
-		Result result = new Result();
 
 		if (parameters.size() < 2) {
-			// throw new ParameterException(
-			// "Must specify <existing index> <new index> names");
-			result.result = USAGE_ERROR;
-			return result;
+			throw new ParameterException(
+					"Must specify <existing index> <new index> names");
 		}
 
 		// This is the new index name.
 		String newIndex = parameters.get(1);
 		String newIndexNamespace = IndexPluginOptions.getIndexNamespace(newIndex);
-		result.newIndex = newIndex;
 
 		// Make sure we're not already in the index.
 		IndexPluginOptions existPlugin = new IndexPluginOptions();
 		if (existPlugin.load(
 				existingProps,
 				newIndexNamespace)) {
-			// throw new ParameterException(
-			// "That index already exists: " + newIndex);
-			result.result = INDEX_EXISTS;
-			return result;
+			throw new ParameterException(
+					"That index already exists: " + newIndex);
 		}
 
 		// Save the options.
@@ -157,12 +155,12 @@ public class CopyIndexCommand extends
 		}
 
 		// Write properties file
-		ConfigOptions.writeProperties(
+		if (!ConfigOptions.writeProperties(
 				configFile,
-				existingProps);
-
-		result.result = SUCCESS;
-		return result;
+				existingProps)) {
+			throw new WritePropertiesException(
+					"Write failure");
+		}
 	}
 
 	public List<String> getParameters() {
@@ -177,12 +175,15 @@ public class CopyIndexCommand extends
 		this.parameters.add(newIndex);
 	}
 
-	// new code
-	private static class Result
+	private static class WritePropertiesException extends
+			RuntimeException
 	{
-		int result;
-		String newIndex; // TODO update for this class
+		private WritePropertiesException(
+				String string ) {
+			super(
+					string);
+		}
+
 	}
-	// end new code
 
 }
